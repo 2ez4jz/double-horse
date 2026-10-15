@@ -20,12 +20,13 @@ try{
  const checks=[...w.document.querySelectorAll('input[type=checkbox]')];checks.forEach(c=>{if(c.checked)c.click();});await pause();
  for(let i=0;i<3;i++){
   await click('模拟击败 Boss');const opt=w.document.querySelector('.drop-options button');opt.click();await pause();await click('开始拍卖');
-  if(i===0){await click('跳过拍卖',{exact:true});assert.equal(state().drops[0].status,'skipped');assert.equal(state().ledger.length,0);await click('重新拍卖');}
+  const receiptsBefore=state().ledger.length;
   await input('input[aria-label="自定义竞拍金额 CAD"]','1000');await click('出价',{exact:true});assert.equal(state().drops.at(-1).winner,'self');
   await click('团长提前结束拍卖');await click('模拟付款');await click('二维码',{exact:true});assert(w.document.querySelector('.qr-placeholder'));assert(text().includes('不可扫描付款'));
-  await click('我已模拟付款');assert.equal(state().drops.at(-1).status,'verifying');assert.equal(state().ledger.length,i);
+  await click('我已模拟付款');assert.equal(state().drops.at(-1).status,'verifying');assert.equal(state().ledger.length,receiptsBefore);
   await click('确认到账',{exact:true});assert.equal(state().drops.at(-1).status,'confirmed');await click('分配装备',{exact:true});assert.equal(state().drops.at(-1).status,'distributed');
-  await click('跳过剩余拍卖');assert.equal(state().drops.filter(d=>d.bossIndex===i).length,i===2?4:2);
+  if(i===0){const other=w.document.querySelectorAll('.drop-options button')[1];other.click();await pause();await click('开始拍卖');await click('快速成交',{exact:true});assert.equal(state().drops.at(-1).status,'distributed');assert(state().ledger.at(-1).amount>0);}
+  if(i!==0)await click('快速成交剩余装备');assert.equal(state().drops.filter(d=>d.bossIndex===i).length,i===2?4:2);
   await click(i===2?'结束团本，前往结算':'进入下一个 Boss');
  }
  assert.equal(state().phase,'ended');await click('保存账户');assert.equal(state().members[0].account,'adventurer@example.test');
