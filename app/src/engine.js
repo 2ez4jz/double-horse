@@ -7,6 +7,23 @@ export const roomOf=s=>ROOMS.find(r=>r.id===s.roomId);
 export function collected(s){return (s.ledger||[]).reduce((n,e)=>n+(e.type==='receipt'?e.amount:-e.amount),0);}
 function requireThat(condition,message){if(!condition)throw new Error(message);}
 function log(s,text){s.logs.unshift({id:++s.seq,time:new Date().toISOString(),text});}
+// Fast-forward only fictional demo events; preserve the highest existing bid.
+function fastComplete(s,d,now){
+ const alreadyPaid=d.status==='confirmed';
+ d.history=[...(d.history||[]),{attempt:d.attempt,status:d.status,price:d.price,winner:d.winner,bids:structuredClone(d.bids),reason:'demo-fast-forward'}];
+ if(!d.winner){
+  const member=s.members[(s.drops.indexOf(d)+1)%s.members.length];
+  d.winner=member.id;d.price=d.item.start;
+  d.bids.unshift({playerId:member.id,name:member.name,amount:d.price,time:now,simulated:true});
+ }
+ d.endsAt=null;d.fastForwarded=true;
+ log(s,`${d.item.name} 快速模拟成交：${s.members.find(m=>m.id===d.winner)?.name}，${money(d.price)}。`);
+ if(!alreadyPaid){
+  s.ledger.push({id:`receipt-${d.id}-${d.attempt}`,type:'receipt',dropId:d.id,attempt:d.attempt,amount:d.price,time:new Date(now).toISOString(),simulated:true,source:'demo-fast-forward'});
+  log(s,`${d.item.name}：快速演示模拟付款、到账核验完成，收入 +${money(d.price)}。`);
+ }
+ d.status='distributed';log(s,`${d.item.name} 已模拟分配给 ${s.members.find(m=>m.id===d.winner)?.name}。`);
+}
 export function settlementPreview(s){
  const total=collected(s),v=s.settings,n=s.members.length;
  const commission=Math.round(total*v.commission/100),fees=v.fee;
@@ -69,9 +86,7 @@ export function step(state,action,actor='leader',now=Date.now()){
  case 'SKIP_AUCTION':{
   leader();live();unlocked();const d=drop();requireThat(d.bossIndex===s.bossIndex,'只能跳过当前 Boss 的拍卖');
   requireThat(['ready','open'].includes(d.status),'仅可跳过未成交的拍卖');
-  d.history=[...(d.history||[]),{attempt:d.attempt,status:d.status,price:d.price,winner:d.winner,bids:structuredClone(d.bids),reason:'demo-skip'}];
-  d.status='skipped';d.endsAt=null;d.price=0;d.winner=null;
-  log(s,`${d.item.name} 已跳过拍卖（演示），未成交、不计收入。`);break;
+  fastComplete(s,d,now);break;
  }
  case 'SKIP_REMAINING':{
   leader();live();unlocked();requireThat(s.defeated.includes(s.bossIndex),'请先模拟击败 Boss');
@@ -82,11 +97,7 @@ export function step(state,action,actor='leader',now=Date.now()){
     const id=`loot-${++s.seq}`;s.drops.push({id,bossIndex:s.bossIndex,item,status:'ready',bids:[],price:0,winner:null,attempt:1,method:'EMT',endsAt:null});
    }
   }
-  for(const d of s.drops.filter(d=>d.bossIndex===s.bossIndex&&['ready','open'].includes(d.status))){
-   d.history=[...(d.history||[]),{attempt:d.attempt,status:d.status,price:d.price,winner:d.winner,bids:structuredClone(d.bids),reason:'demo-skip'}];
-   d.status='skipped';d.endsAt=null;d.price=0;d.winner=null;
-   log(s,`${d.item.name} 已跳过拍卖（演示），未成交、不计收入。`);
-  }
+  for(const d of s.drops.filter(d=>d.bossIndex===s.bossIndex&&['ready','open','pending','verifying','confirmed','skipped'].includes(d.status)))fastComplete(s,d,now);
   break;
  }
  case 'CLOSE':{
@@ -108,7 +119,7 @@ export function step(state,action,actor='leader',now=Date.now()){
  case 'REFUND':leader();unlocked();{const d=drop();requireThat(['confirmed','distributed'].includes(d.status),'仅已确认到账交易可以退款');d.status='refunded';s.ledger.push({id:`refund-${d.id}-${d.attempt}`,type:'refund',dropId:d.id,attempt:d.attempt,amount:d.price,time:new Date(now).toISOString()});log(s,`${d.item.name} 全额模拟退款 ${money(d.price)}，已从收入扣除。`);}break;
  case 'NEXT':{
   leader();live();requireThat(s.defeated.includes(s.bossIndex),'请先击败当前 Boss');
-  const current=s.drops.filter(d=>d.bossIndex===s.bossIndex);requireThat(current.length>=roomOf(s).bosses[s.bossIndex].dropCount,`请录满 ${roomOf(s).bosses[s.bossIndex].dropCount} 件掉落，或点击跳过剩余拍卖`);
+  const current=s.drops.filter(d=>d.bossIndex===s.bossIndex);requireThat(current.length>=roomOf(s).bosses[s.bossIndex].dropCount,`请录满 ${roomOf(s).bosses[s.bossIndex].dropCount} 件掉落，或点击快速成交剩余装备`);
   requireThat(current.every(d=>['distributed','unsold','skipped','cancelled','refunded'].includes(d.status)),'请先处理当前 Boss 的掉落与付款');
   if(s.bossIndex<roomOf(s).bosses.length-1)s.bossIndex++;else s.phase='ended';log(s,s.phase==='ended'?'全部 Boss 已结束，可以生成结算。':'进入下一个 Boss。');break;
  }
