@@ -9,13 +9,13 @@ function drop(s){s=apply(s,{type:'DEFEAT'});return apply(s,{type:'DROP',itemId:r
 function open(s){s=drop(s);return apply(s,{type:'OPEN',id:s.drops.at(-1).id});}
 function sold(s,amount=100000){s=open(s);const id=s.drops.at(-1).id;s=apply(s,{type:'BID',id,amount},'player',1001);s=apply(s,{type:'CLOSE',id});return s;}
 function paid(s){const id=s.drops.at(-1).id;s=apply(s,{type:'SUBMIT_PAYMENT',id,method:'EMT'});return apply(s,{type:'VERIFY',id,success:true});}
-function complete(){let s=started();for(let i=0;i<3;i++){s=paid(sold(s,100000+i));s=apply(s,{type:'DISTRIBUTE',id:s.drops.at(-1).id});s=apply(s,{type:'NEXT'});}s=apply(s,{type:'ACCOUNT',alias:'tester',method:'EMT'});return s;}
+function complete(){let s=started();for(let i=0;i<3;i++){s=paid(sold(s,100000+i));s=apply(s,{type:'DISTRIBUTE',id:s.drops.at(-1).id});s=apply(s,{type:'SKIP_REMAINING'});s=apply(s,{type:'NEXT'});}s=apply(s,{type:'ACCOUNT',alias:'tester',method:'EMT'});return s;}
 const err=(fn,msg)=>assert.throws(fn,new RegExp(msg));
-test('all 3 reference rooms have 3 bosses with icons and real named drops',()=>{assert.equal(ROOMS.length,3);for(const r of ROOMS){assert.equal(r.bosses.length,3);for(const b of r.bosses)assert.equal(b.items.length,2);}});
+test('all 3 reference rooms have 3 bosses with icons and real named drops',()=>{assert.equal(ROOMS.length,3);for(const r of ROOMS){assert.equal(r.bosses.length,3);for(const b of r.bosses){assert.equal(b.items.length,b.dropCount);assert.equal(b.dropCount,b===r.bosses.at(-1)?4:2);}}});
 test('join validation, nickname length, and solo no login entry',()=>{err(()=>apply(fresh(),{type:'JOIN',roomId:'bad'}),'房间');err(()=>apply(fresh(),{type:'JOIN',roomId:ROOMS[0].id,name:'  '}),'昵称');assert.equal(team().members[0].id,'self');});
 test('matching fills exactly to capacity and never duplicates players',()=>{for(const r of ROOMS){let s=team(r.id);assert.equal(s.members.length,r.capacity);assert.equal(new Set(s.members.map(m=>m.id)).size,r.capacity);assert.equal(apply(s,{type:'FILL'}).members.length,r.capacity);assert.equal(s.members.filter(m=>m.leader).length,1);}});
 test('40-player default formation has 2 tanks and 4 healers',()=>{const s=team();assert.equal(s.members.filter(m=>m.role==='tank').length,2);assert.equal(s.members.filter(m=>m.role==='healer').length,4);});
-test('cannot start unfilled team or advance before boss drops resolved',()=>{const s=apply(fresh(),{type:'JOIN',roomId:ROOMS[0].id,name:'x',className:'萨满',role:'dps'});err(()=>apply(s,{type:'START'}),'满员');err(()=>apply(started(),{type:'NEXT'}),'击败');err(()=>apply(open(started()),{type:'NEXT'}),'处理');});
+test('cannot start unfilled team or advance before boss drops resolved',()=>{const s=apply(fresh(),{type:'JOIN',roomId:ROOMS[0].id,name:'x',className:'萨满',role:'dps'});err(()=>apply(s,{type:'START'}),'满员');err(()=>apply(started(),{type:'NEXT'}),'击败');err(()=>apply(open(started()),{type:'NEXT'}),'录满');});
 test('player view cannot issue captain mutations',()=>{err(()=>apply(team(),{type:'START'},'player'),'团长');err(()=>apply(started(),{type:'DEFEAT'},'player'),'团长');});
 test('drop requires defeated boss and rejects duplicate source items',()=>{err(()=>apply(started(),{type:'DROP',itemId:'6907'}),'击败');const s=drop(started());err(()=>apply(s,{type:'DROP',itemId:s.drops[0].item.id}),'已经录入');});
 test('minimum bids, invalid numbers, leading bidder and deadline are enforced',()=>{let s=open(started());const id=s.drops[0].id;err(()=>apply(s,{type:'BID',id,amount:4999},'player',1001),'最低');err(()=>apply(s,{type:'BID',id,amount:NaN},'player',1001),'有效');err(()=>apply(s,{type:'BID',id,amount:Infinity},'player',1001),'有效');err(()=>apply(s,{type:'BID',id,amount:5000},'player',31000),'结束');s=apply(s,{type:'BID',id,amount:5000},'player',1002);err(()=>apply(s,{type:'BID',id,amount:6000},'player',1003),'最高');err(()=>apply(s,{type:'BID',id,playerId:'bot-1',amount:6000},'player',1003),'自己');});
@@ -35,7 +35,35 @@ test('full 3 boss raid is ended and can lock once only after accounts exist',()=
 test('missing account prevents lock and only fictitious aliases accepted',()=>{let s=complete();s.members[0].account='';err(()=>apply(s,{type:'LOCK'}),'收款');err(()=>apply(s,{type:'ACCOUNT',alias:'real@gmail.com',method:'EMT'}),'别名');s=apply(s,{type:'ACCOUNT',alias:'demo-user',method:'EMT'});assert.equal(s.members[0].account,'demo-user@example.test');});
 test('failed and review payouts can retry; successful payout is idempotently protected',()=>{let s=apply(complete(),{type:'LOCK'});s=apply(s,{type:'PAYOUT',playerId:'self',fail:true});assert.equal(s.settlement.payouts[0].status,'failed');s=apply(s,{type:'PAYOUT',playerId:'self',review:true});assert.equal(s.settlement.payouts[0].status,'review');s=apply(s,{type:'PAYOUT',playerId:'self'});assert.equal(s.settlement.payouts[0].status,'sent');err(()=>apply(s,{type:'PAYOUT',playerId:'self'}),'重复');err(()=>apply(s,{type:'ACCOUNT',alias:'different',method:'EMT'}),'修改');});
 test('bulk payout never resends sent items or silently retries failed/review items',()=>{let s=apply(complete(),{type:'LOCK'});s=apply(s,{type:'PAYOUT',playerId:'self',fail:true});s=apply(s,{type:'PAYOUT',playerId:'bot-1',review:true});s=apply(s,{type:'PAYOUT_ALL'});const copy=structuredClone(s.settlement.payouts);s=apply(s,{type:'PAYOUT_ALL'});assert.deepEqual(s.settlement.payouts,copy);assert.equal(s.settlement.payouts.filter(p=>p.status==='sent').length,38);});
-test('reset creates fresh ledger and unique session; report is complete JSON',()=>{const s=complete(),r=JSON.parse(exportReport(s));assert.equal(r.demo,true);assert.equal(r.currency,'CAD');assert.equal(r.drops.length,3);assert.equal(r.ledger.length,3);const a=fresh(),b=fresh();assert.notEqual(a.sessionId,b.sessionId);assert.equal(a.ledger.length,0);});
+test('reset creates fresh ledger and unique session; report is complete JSON',()=>{const s=complete(),r=JSON.parse(exportReport(s));assert.equal(r.demo,true);assert.equal(r.currency,'CAD');assert.equal(r.drops.length,8);assert.equal(r.ledger.length,3);const a=fresh(),b=fresh();assert.notEqual(a.sessionId,b.sessionId);assert.equal(a.ledger.length,0);});
 test('transitions preserve original state when rejected or accepted',()=>{const s=started(),copy=structuredClone(s);drop(s);assert.deepEqual(s,copy);err(()=>apply(s,{type:'NEXT'}),'击败');assert.deepEqual(s,copy);});
 
-test('completed boss auctions cannot reopen during a later boss',()=>{let s=open(started());const id=s.drops[0].id;s=apply(s,{type:'CLOSE',id});s=apply(s,{type:'NEXT'});err(()=>apply(s,{type:'OPEN',id}),'当前 Boss');});
+test('completed boss auctions cannot reopen during a later boss',()=>{let s=open(started());const id=s.drops[0].id;s=apply(s,{type:'CLOSE',id});s=apply(s,{type:'SKIP_REMAINING'});s=apply(s,{type:'NEXT'});err(()=>apply(s,{type:'OPEN',id}),'当前 Boss');});
+
+test('drop cap rejects third regular-boss drop and final boss allows four',()=>{
+ let s=drop(started());s=apply(s,{type:'DROP',itemId:roomOf(s).bosses[0].items[1].id});
+ err(()=>apply(s,{type:'DROP',custom:'extra'}),'仅掉落 2');
+ for(let i=0;i<2;i++){s=apply(s,{type:'SKIP_REMAINING'});s=apply(s,{type:'NEXT'});if(i===0)s=apply(s,{type:'DEFEAT'});}
+ s=apply(s,{type:'DEFEAT'});for(const item of roomOf(s).bosses[2].items)s=apply(s,{type:'DROP',itemId:item.id});
+ assert.equal(s.drops.filter(d=>d.bossIndex===2).length,4);
+});
+test('skipping active bids retains audit history but produces no receipt or winner',()=>{
+ let s=open(started());const id=s.drops[0].id;s=apply(s,{type:'BID',id,amount:5000},'player',1001);
+ err(()=>apply(s,{type:'SKIP_AUCTION',id},'player'),'团长');s=apply(s,{type:'SKIP_AUCTION',id});
+ assert.equal(s.drops[0].status,'skipped');assert.equal(s.drops[0].price,0);assert.equal(s.drops[0].winner,null);
+ assert.equal(s.drops[0].history[0].price,5000);assert.equal(collected(s),0);
+ err(()=>apply(s,{type:'CLOSE',id},'system',32000),'没有');
+ s=apply(s,{type:'OPEN',id});assert.equal(s.drops[0].status,'open');assert.equal(s.drops[0].bids.length,0);
+});
+test('skip remaining preserves sold payment obligations and confirmed income',()=>{
+ let s=sold(started());const id=s.drops[0].id;
+ err(()=>apply(s,{type:'SKIP_AUCTION',id}),'未成交');s=apply(s,{type:'SKIP_REMAINING'});
+ assert.equal(s.drops[0].status,'pending');err(()=>apply(s,{type:'NEXT'}),'处理');
+ s=apply(s,{type:'SUBMIT_PAYMENT',id,method:'EMT'});s=apply(s,{type:'VERIFY',id,success:true});
+ s=apply(s,{type:'SKIP_REMAINING'});assert.equal(collected(s),100000);assert.equal(s.drops[0].status,'confirmed');
+});
+test('all rooms can skip every drop and finish without phantom income',()=>{
+ for(const room of ROOMS){let s=apply(team(room.id),{type:'START'});
+ for(let i=0;i<3;i++){s=apply(s,{type:'DEFEAT'});s=apply(s,{type:'SKIP_REMAINING'});s=apply(s,{type:'NEXT'});}
+ assert.equal(s.phase,'ended');assert.equal(s.drops.length,8);assert(s.drops.every(d=>d.status==='skipped'));assert.equal(collected(s),0);}
+});
