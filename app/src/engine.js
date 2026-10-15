@@ -52,7 +52,7 @@ export function step(state,action,actor='leader',now=Date.now()){
   const id=`loot-${++s.seq}`;s.drops.push({id,bossIndex:s.bossIndex,item,status:'ready',bids:[],price:0,winner:null,attempt:1,method:'EMT',endsAt:null});log(s,`已录入掉落：${item.name}。`);break;
  }
  case 'OPEN':{
-  leader();live();unlocked();const d=drop();requireThat(['ready','unsold','failed','cancelled','refunded'].includes(d.status),'这件装备不能重新开拍');
+  leader();live();unlocked();const d=drop();requireThat(d.bossIndex===s.bossIndex,'只能在当前 Boss 阶段重新拍卖');requireThat(['ready','unsold','failed','cancelled','refunded'].includes(d.status),'这件装备不能重新开拍');
   requireThat(!s.drops.some(x=>x.status==='open'),'请先完成正在进行的拍卖');
   if(d.status!=='ready'){d.history=[...(d.history||[]),{attempt:d.attempt,status:d.status,price:d.price,winner:d.winner,bids:structuredClone(d.bids)}];d.attempt++;d.bids=[];d.price=0;d.winner=null;}
   d.status='open';d.endsAt=now+30000;log(s,`${d.item.name} 第 ${d.attempt} 次拍卖开始，30 秒倒计时。`);break;
