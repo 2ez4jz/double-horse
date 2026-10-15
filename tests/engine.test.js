@@ -31,11 +31,11 @@ test('40 people 5000 revenue matches 4200 pool and 105 base example',()=>{let s=
 test('integer cents distribute remainder with exact conservation',()=>{for(let amount=50000;amount<50150;amount++){let s=paid(sold(started(),amount));const p=settlementPreview(s);assert(p.valid);assert.equal(p.payouts.reduce((n,p)=>n+p.amount,0)+p.commission+p.fees,p.total);assert.equal(p.payouts.reduce((n,p)=>n+p.base,0),p.pool);}});
 test('percentage bonus, fixed bonus and processing fees participate in conservation',()=>{let s=paid(sold(started(),500000));s=apply(s,{type:'SETTINGS',values:{bonus:1050,bonusRate:5,fee:250}});const p=settlementPreview(s);assert.equal(p.payouts[0].subsidy,26050);assert.equal(p.payouts.reduce((n,p)=>n+p.amount,0)+p.commission+p.fees,p.total);});
 test('insufficient balance, invalid rule amounts and percentages reject settlement',()=>{let s=complete();s=apply(s,{type:'SETTINGS',values:{leader:9999999}});assert.equal(settlementPreview(s).valid,false);err(()=>apply(s,{type:'LOCK'}),'超过');err(()=>apply(s,{type:'SETTINGS',values:{commission:101}}),'比例');err(()=>apply(s,{type:'SETTINGS',values:{tank:-1}}),'非负');});
-test('full 3 boss raid is ended and can lock once only after accounts exist',()=>{let s=complete();assert.equal(s.phase,'ended');assert.equal(s.drops.filter(d=>d.status==='distributed').length,3);s=apply(s,{type:'LOCK'});assert(s.settlement);err(()=>apply(s,{type:'LOCK'}),'锁定');err(()=>apply(s,{type:'SETTINGS',values:{leader:0}}),'锁定');err(()=>apply(s,{type:'REFUND',id:s.drops[0].id}),'锁定');});
+test('full 3 boss raid is ended and can lock once only after accounts exist',()=>{let s=complete();assert.equal(s.phase,'ended');assert.equal(s.drops.filter(d=>d.status==='distributed').length,8);s=apply(s,{type:'LOCK'});assert(s.settlement);err(()=>apply(s,{type:'LOCK'}),'锁定');err(()=>apply(s,{type:'SETTINGS',values:{leader:0}}),'锁定');err(()=>apply(s,{type:'REFUND',id:s.drops[0].id}),'锁定');});
 test('missing account prevents lock and only fictitious aliases accepted',()=>{let s=complete();s.members[0].account='';err(()=>apply(s,{type:'LOCK'}),'收款');err(()=>apply(s,{type:'ACCOUNT',alias:'real@gmail.com',method:'EMT'}),'别名');s=apply(s,{type:'ACCOUNT',alias:'demo-user',method:'EMT'});assert.equal(s.members[0].account,'demo-user@example.test');});
 test('failed and review payouts can retry; successful payout is idempotently protected',()=>{let s=apply(complete(),{type:'LOCK'});s=apply(s,{type:'PAYOUT',playerId:'self',fail:true});assert.equal(s.settlement.payouts[0].status,'failed');s=apply(s,{type:'PAYOUT',playerId:'self',review:true});assert.equal(s.settlement.payouts[0].status,'review');s=apply(s,{type:'PAYOUT',playerId:'self'});assert.equal(s.settlement.payouts[0].status,'sent');err(()=>apply(s,{type:'PAYOUT',playerId:'self'}),'重复');err(()=>apply(s,{type:'ACCOUNT',alias:'different',method:'EMT'}),'修改');});
 test('bulk payout never resends sent items or silently retries failed/review items',()=>{let s=apply(complete(),{type:'LOCK'});s=apply(s,{type:'PAYOUT',playerId:'self',fail:true});s=apply(s,{type:'PAYOUT',playerId:'bot-1',review:true});s=apply(s,{type:'PAYOUT_ALL'});const copy=structuredClone(s.settlement.payouts);s=apply(s,{type:'PAYOUT_ALL'});assert.deepEqual(s.settlement.payouts,copy);assert.equal(s.settlement.payouts.filter(p=>p.status==='sent').length,38);});
-test('reset creates fresh ledger and unique session; report is complete JSON',()=>{const s=complete(),r=JSON.parse(exportReport(s));assert.equal(r.demo,true);assert.equal(r.currency,'CAD');assert.equal(r.drops.length,8);assert.equal(r.ledger.length,3);const a=fresh(),b=fresh();assert.notEqual(a.sessionId,b.sessionId);assert.equal(a.ledger.length,0);});
+test('reset creates fresh ledger and unique session; report is complete JSON',()=>{const s=complete(),r=JSON.parse(exportReport(s));assert.equal(r.demo,true);assert.equal(r.currency,'CAD');assert.equal(r.drops.length,8);assert.equal(r.ledger.length,8);const a=fresh(),b=fresh();assert.notEqual(a.sessionId,b.sessionId);assert.equal(a.ledger.length,0);});
 test('transitions preserve original state when rejected or accepted',()=>{const s=started(),copy=structuredClone(s);drop(s);assert.deepEqual(s,copy);err(()=>apply(s,{type:'NEXT'}),'击败');assert.deepEqual(s,copy);});
 
 test('completed boss auctions cannot reopen during a later boss',()=>{let s=open(started());const id=s.drops[0].id;s=apply(s,{type:'CLOSE',id});s=apply(s,{type:'SKIP_REMAINING'});s=apply(s,{type:'NEXT'});err(()=>apply(s,{type:'OPEN',id}),'当前 Boss');});
@@ -47,23 +47,28 @@ test('drop cap rejects third regular-boss drop and final boss allows four',()=>{
  s=apply(s,{type:'DEFEAT'});for(const item of roomOf(s).bosses[2].items)s=apply(s,{type:'DROP',itemId:item.id});
  assert.equal(s.drops.filter(d=>d.bossIndex===2).length,4);
 });
-test('skipping active bids retains audit history but produces no receipt or winner',()=>{
+test('fast completion keeps highest bid and creates exactly one simulated receipt',()=>{
  let s=open(started());const id=s.drops[0].id;s=apply(s,{type:'BID',id,amount:5000},'player',1001);
  err(()=>apply(s,{type:'SKIP_AUCTION',id},'player'),'团长');s=apply(s,{type:'SKIP_AUCTION',id});
- assert.equal(s.drops[0].status,'skipped');assert.equal(s.drops[0].price,0);assert.equal(s.drops[0].winner,null);
- assert.equal(s.drops[0].history[0].price,5000);assert.equal(collected(s),0);
- err(()=>apply(s,{type:'CLOSE',id},'system',32000),'没有');
- s=apply(s,{type:'OPEN',id});assert.equal(s.drops[0].status,'open');assert.equal(s.drops[0].bids.length,0);
+ assert.equal(s.drops[0].status,'distributed');assert.equal(s.drops[0].price,5000);assert.equal(s.drops[0].winner,'self');
+ assert.equal(s.drops[0].history[0].price,5000);assert.equal(collected(s),5000);assert.equal(s.ledger.length,1);
+ err(()=>apply(s,{type:'CLOSE',id},'system',32000),'没有');err(()=>apply(s,{type:'SKIP_AUCTION',id}),'未成交');
+ s=apply(s,{type:'SKIP_REMAINING'});const total=collected(s);s=apply(s,{type:'SKIP_REMAINING'});assert.equal(collected(s),total);assert.equal(s.ledger.length,2);
 });
-test('skip remaining preserves sold payment obligations and confirmed income',()=>{
- let s=sold(started());const id=s.drops[0].id;
- err(()=>apply(s,{type:'SKIP_AUCTION',id}),'未成交');s=apply(s,{type:'SKIP_REMAINING'});
- assert.equal(s.drops[0].status,'pending');err(()=>apply(s,{type:'NEXT'}),'处理');
- s=apply(s,{type:'SUBMIT_PAYMENT',id,method:'EMT'});s=apply(s,{type:'VERIFY',id,success:true});
- s=apply(s,{type:'SKIP_REMAINING'});assert.equal(collected(s),100000);assert.equal(s.drops[0].status,'confirmed');
+test('batch fast completion handles pending, verifying and confirmed without double receipt',()=>{
+ for(const stage of ['pending','verifying','confirmed']){
+  let s=sold(started());const id=s.drops[0].id;
+  if(stage!=='pending')s=apply(s,{type:'SUBMIT_PAYMENT',id,method:'EMT'});
+  if(stage==='confirmed')s=apply(s,{type:'VERIFY',id,success:true});
+  s=apply(s,{type:'SKIP_REMAINING'});assert.equal(collected(s),105000);assert.equal(s.drops[0].status,'distributed');assert.equal(s.ledger.length,2);
+  s=apply(s,{type:'NEXT'});assert.equal(s.bossIndex,1);
+ }
 });
-test('all rooms can skip every drop and finish without phantom income',()=>{
+test('all rooms fast-complete 2/2/4 drops with balanced income and payouts',()=>{
  for(const room of ROOMS){let s=apply(team(room.id),{type:'START'});
  for(let i=0;i<3;i++){s=apply(s,{type:'DEFEAT'});s=apply(s,{type:'SKIP_REMAINING'});s=apply(s,{type:'NEXT'});}
- assert.equal(s.phase,'ended');assert.equal(s.drops.length,8);assert(s.drops.every(d=>d.status==='skipped'));assert.equal(collected(s),0);}
+ assert.equal(s.phase,'ended');assert.equal(s.drops.length,8);assert(s.drops.every(d=>d.status==='distributed'));assert.equal(collected(s),40000);
+ const p=settlementPreview(s);assert(p.valid);assert.equal(p.payouts.reduce((n,x)=>n+x.amount,0)+p.commission+p.fees,p.total);
+ s=apply(s,{type:'ACCOUNT',alias:'test',method:'EMT'});s=apply(s,{type:'LOCK'});s=apply(s,{type:'PAYOUT_ALL'});assert(s.settlement.payouts.every(p=>p.status==='sent'));
+ }
 });
