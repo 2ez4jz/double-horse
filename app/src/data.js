@@ -1,4 +1,4 @@
-export const ROOMS = [
+const rooms = [
   {
     "id": "blackfathom-deeps",
     "name": "黑暗深渊",
@@ -314,3 +314,13 @@ export const ROOMS = [
     "level": "29–38"
   }
 ];
+
+// Demo rule: two drops per regular boss, four per final boss.
+// Repeated final-boss items represent separate copies, not extra real loot-table entries.
+export const ROOMS = rooms.map(room => ({...room, bosses: room.bosses.map((boss, index) => ({
+  ...boss,
+  dropCount: index === room.bosses.length - 1 ? 4 : 2,
+  items: index === room.bosses.length - 1
+    ? [...boss.items, ...boss.items.map(item => ({...item, id: `${item.id}-copy`, demoCopy: true}))]
+    : boss.items
+}))}));
